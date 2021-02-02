@@ -4,6 +4,7 @@ import pygame
 from . board import Board
 from . gui import SelectionGroup, Input, Button, Label, InputDialogue
 from . leaderboard import Leaderboard
+from . boardaxis import BoardAxis
 
 
 ASSETS_DIR = os.path.join(os.path.dirname(__file__), 'assets')
@@ -184,6 +185,8 @@ class Game:
             tile_image, mine_count_images, flag_image, mine_image,
             on_status_change_callback=self.on_status_change)
 
+        self.board_axis = BoardAxis(self.board, gui_font, self.GUI_FONT_COLOR)
+
         self.screen = None
         self.screen_rect = None
         self.board_rect = None
@@ -282,6 +285,8 @@ class Game:
                                 self.n_rows * self.TILE_SIZE)
         self.board.rect.center = self.board_area_rect.center
 
+        self.board_axis.set(self.board)
+
         self.hud_rect = pygame.Rect(2 * self.MARGIN + self.GUI_WIDTH,
                                     self.MARGIN,
                                     board_area_width,
@@ -376,6 +381,7 @@ class Game:
         self.board.reset(n_rows=self.n_rows,
                          n_cols=self.n_cols,
                          n_mines=self.n_mines)
+        self.board_axis.set(self.board)
 
     def show_leaderboard(self):
         """Change screen to leaderboard."""
@@ -482,6 +488,8 @@ class Game:
             return
 
         self.board.draw(self.screen)
+
+        self.board_axis.draw(self.screen)
 
         self.difficulty_selector.draw(self.screen)
         self.height_input.draw(self.screen)
