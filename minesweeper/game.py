@@ -104,6 +104,28 @@ class Timer:
             self.on_time_event()
 
 
+class FrequencyRank:
+    def __init__(self):
+        self.list = []
+
+    def clear(self):
+        self.list.clear()
+
+    def append(self, element):
+        for i in self.list:
+            if i[0] == element:
+                i[1] += 1
+                return
+
+        self.list.append([element, 1])
+
+    def top(self):
+        if len(self.list) == 0:
+            return None
+        self.list.sort(key=(lambda i: i[1]), reverse=True)
+        return self.list[0][0]
+
+
 def create_count_tiles(tile_size, font_name):
     """Create tiles for mine counts.
 
@@ -192,9 +214,11 @@ class Game:
 
     def __init__(self, state_file_path):
         self.player = "all"
+        self.free_player = FrequencyRank()
         self.dmj = Danmuji("299992")
         self.dmj.run()
 
+        self.state_file_path = state_file_path
         try:
             with open(state_file_path) as state_file:
                 state = json.load(state_file)
@@ -271,7 +295,7 @@ class Game:
 
     def init_screen(self):
         """Initialize screen and compute rectangles for different regions."""
-        self.screen_image = load_image('screen.png')
+        self.screen_image = load_image('screen_free_version.png')
         self.screen_rect = self.screen_image.get_rect()
         self.screen = pygame.display.set_mode((self.screen_rect.width, self.screen_rect.height))
 
@@ -340,6 +364,7 @@ class Game:
     def reset_player(self):
         self.player = 'all'
         self.player_input_timer.stop()
+        self.free_player.clear()
 
     def on_status_change(self, new_status):
         """Handle game status change."""
@@ -349,9 +374,9 @@ class Game:
             self.reset_player()
         elif new_status == 'victory':
             self.status.set_text("VICTORY!")
-            if self.player != 'all' and self.leaderboard.needs_update(self.difficulty,
-                                                                      self.board.time):
-                self.leaderboard.update(self.difficulty, self.player, self.board.time)
+            if self.leaderboard.needs_update(self.difficulty, self.board.time):
+                self.leaderboard.update(self.difficulty, self.free_player.top(), self.board.time)
+                self.save_state(self.state_file_path)
             self.gameover_restart_timer.start(self.DELAY_BEFORE_RESTART_MS)
             self.reset_player()
         elif new_status == 'before_start':
@@ -427,6 +452,7 @@ class Game:
 
             if event.type == pygame.MOUSEBUTTONDOWN:
                 self.board.on_mouse_down(event.button)
+                print(self.free_player.list)
 
     def process_danmu_list(self):
         danmu_list = self.dmj.get_danmu_list()
@@ -446,6 +472,7 @@ class Game:
                         self.player_input_timer.start(self.PLAYER_INPUT_INTERVAL_MS)
                     i, j = self.board.n_rows - danmu[2][1] - 1, danmu[2][0]
                     if danmu[1] == 'open':
+                        self.free_player.append(danmu[0])
                         self.board.open_tile(i, j)
                     elif danmu[1] == 'check':
                         self.board.check_tile_if_unchecked(i, j)
@@ -460,10 +487,15 @@ class Game:
             clock.tick(30)
             self.timer.set_value(self.board.time)
             self.current_mines.set_value(self.board.n_mines_left)
-            player_text = self.player
+
+            if self.player == "all" and self.free_player.top() is not None:
+                player_text = self.free_player.top()
+            else:
+                player_text = self.player
             if len(player_text) > 8:
                 player_text = player_text[:8] + "..."
             self.player_display.set_text(player_text)
+
             self.process_events()
             self.process_danmu_list()
             self.player_input_timer.check()

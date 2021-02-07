@@ -63,12 +63,14 @@ class Label(GUIElement):
         Label text.
     """
     def __init__(self, font, font_color, text):
+        self.text = text
         self.font = font
         self.font_color = font_color
         super(Label, self).__init__(font.render(text, True, font_color))
 
     def set_text(self, text):
         """Set text."""
+        self.text = text
         old_center = self.rect.center
         self.surface = self.font.render(text, True, self.font_color)
         self.rect = self.surface.get_rect(center=old_center)

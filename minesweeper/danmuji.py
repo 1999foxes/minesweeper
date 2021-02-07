@@ -93,13 +93,13 @@ class Danmuji:
                 #     self.lock.acquire()
                 #     self.danmu_list.append((gift_info[0], "gift", ""))
                 #     self.lock.release()
-                elif jd['cmd'] == 'GUARD_BUY':
-                    d = jd['data']
-                    gift_info = (d['username'], '1', 'captain')
-                    print(gift_info)
-                    self.lock.acquire()
-                    self.danmu_list.append((gift_info[0], "gift", ""))
-                    self.lock.release()
+                # elif jd['cmd'] == 'GUARD_BUY':
+                #     d = jd['data']
+                #     gift_info = (d['username'], '1', 'captain')
+                #     print(gift_info)
+                #     self.lock.acquire()
+                #     self.danmu_list.append((gift_info[0], "gift", ""))
+                #     self.lock.release()
                 elif jd['cmd'] == 'DANMU_MSG':
                     info = jd['info'][2][1], jd['info'][1]
                     print(info)
