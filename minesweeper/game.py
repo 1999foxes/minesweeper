@@ -1,11 +1,14 @@
 import os
 import json
 import pygame
-from . board import Board
-from . gui import SelectionGroup, Input, Button, Label, InputDialogue
-from . leaderboard import Leaderboard
-from . boardaxis import BoardAxis
-
+from io import BytesIO
+import requests
+import time
+from .board import Board
+from .gui import SelectionGroup, Input, Button, Label, InputDialogue
+from .leaderboard import Leaderboard
+from .boardaxis import BoardAxis
+from .danmuji import Danmuji
 
 ASSETS_DIR = os.path.join(os.path.dirname(__file__), 'assets')
 
@@ -27,6 +30,23 @@ def load_image(name, size=None):
     return image
 
 
+def load_random_image():
+    """Load a random image from http://www.dmoe.cc/random.php
+    http://api.mtyqx.cn/api/random.php
+    https://img.asmdh.com/img.php
+    """
+    try:
+        link = 'https://img.asmdh.com/img.php'
+        time0 = time.time()
+        print('getting image from', link)
+        image = pygame.image.load(BytesIO(requests.get(link).content))
+        print('done in ', time.time() - time0, 's')
+        return image
+    except:
+        image = load_image('bg.png')
+        return image
+
+
 def load_font(name, size):
     path = os.path.join(ASSETS_DIR, name)
     try:
@@ -45,11 +65,14 @@ class Timer:
     on_time_event L callable
         Call this event on timer.
     """
-    def __init__(self, on_time_event):
+
+    def __init__(self, on_time_event, countdown_label=None, show_label_interval=None):
         self.on_time_event = on_time_event
         self.start_time = None
         self.interval = None
         self.running = False
+        self.countdown_label = countdown_label
+        self.show_label_interval = show_label_interval
 
     def start(self, interval):
         """Start timer now and trigger event after `interval`."""
@@ -57,12 +80,26 @@ class Timer:
         self.interval = interval
         self.start_time = pygame.time.get_ticks()
 
+    def stop(self):
+        """Stop timer before interval"""
+        self.running = False
+
     def check(self):
         """Check whether event occurred.
 
         Must be called continuously in the main loop."""
-        if (self.running and
-                pygame.time.get_ticks() - self.start_time >= self.interval):
+        if self.running is False:
+            return
+
+        countdown = self.start_time + self.interval - pygame.time.get_ticks()
+        if self.countdown_label is not None:
+            if countdown > 0 and (self.show_label_interval is None or countdown <= self.show_label_interval):
+                text = str(countdown//1000)
+            else:
+                text = ""
+            self.countdown_label.set_text(text)
+
+        if countdown <= 0:
             self.running = False
             self.on_time_event()
 
@@ -130,22 +167,34 @@ def is_digit(key_name):
 
 class Game:
     """Main game class."""
-    TILE_SIZE = 20
-    GUI_WIDTH = 91
-    HUD_HEIGHT = 30
-    MARGIN = 20
-    BG_COLOR = pygame.Color('Light Slate Gray')
-    FIELD_BG_COLOR = pygame.Color('#d7dcdc')
-    FIELD_LINES_COLOR = pygame.Color('#738383')
-    GUI_FONT_COLOR = pygame.Color('Light Yellow')
-    GUI_FONT_SIZE = 13
+    BOARD_SIZE = 550
+    GUI_WIDTH = 500
+    MARGIN = 50
+    # BG_COLOR = pygame.Color('Light Slate Gray')
+    # FIELD_BG_COLOR = pygame.Color('#d7dcdc')
+    # FIELD_LINES_COLOR = pygame.Color('#738383')
+    # GUI_FONT_COLOR = pygame.Color('Light Yellow')
+    # GUI_FONT_SIZE = 13
+    BG_COLOR = pygame.Color('#fdf0f4')
+    FIELD_BG_COLOR = pygame.Color('#ffffff')
+    FIELD_LINES_COLOR = pygame.Color('#ffffff')
+    GUI_FONT_COLOR = pygame.Color('#000000')
+    HUD_FONT_COLOR = pygame.Color('#646de6')
+    GUI_FONT_SIZE = 20
+    HUD_FONT_SIZE = 30
     DIGITS = {chr(c) for c in range(ord('0'), ord('9') + 1)}
     MAX_BOARD_DIMENSION = 50
     MIN_BOARD_DIMENSION_DISPLAY = 10
     MAX_NAME_LENGTH = 8
     DELAY_BEFORE_NAME_INPUT_MS = 1000
+    DELAY_BEFORE_RESTART_MS = 10000
+    PLAYER_INPUT_INTERVAL_MS = 60000
 
     def __init__(self, state_file_path):
+        self.player = "all"
+        self.dmj = Danmuji("299992")
+        self.dmj.run()
+
         try:
             with open(state_file_path) as state_file:
                 state = json.load(state_file)
@@ -153,115 +202,68 @@ class Game:
             state = {}
 
         display_info = pygame.display.Info()
-        self.max_cols = (int(0.95 * display_info.current_w) - self.GUI_WIDTH
-                         - 3 * self.MARGIN) // self.TILE_SIZE
-        self.max_rows = (int(0.95 * display_info.current_h) - self.HUD_HEIGHT
-                         - 3 * self.MARGIN) // self.TILE_SIZE
-
-        difficulty = state.get('difficulty', 'EASY')
-        if difficulty not in ['EASY', 'NORMAL', 'HARD', 'CUSTOM']:
-            difficulty = 'EASY'
+        self.max_cols = 16
+        self.max_rows = 16
 
         if "leaderboard" in state:
             leaderboard_data = state['leaderboard']
         else:
-            leaderboard_data = {'EASY': [], 'NORMAL': [], 'HARD': []}
+            leaderboard_data = {'EASY': [], 'NORMAL': []}
 
         self.n_rows = state.get('n_rows', 10)
         self.n_cols = state.get('n_cols', 10)
         self.n_mines = state.get('n_mines', 10)
-        self.set_difficulty(difficulty)
+        self.difficulty = state.get('difficulty', 'EASY')
 
-        mine_count_images = create_count_tiles(self.TILE_SIZE,
+        tile_size = self.BOARD_SIZE // min(self.n_rows, self.n_cols)
+
+        mine_count_images = create_count_tiles(tile_size,
                                                "kenvector_future.ttf")
-        tile_image = load_image('tile.png', self.TILE_SIZE)
-        mine_image = load_image('mine.png', self.TILE_SIZE)
-        flag_image = load_image('flag.png', self.TILE_SIZE)
-        gui_font = load_font("Akrobat-Bold.otf", self.GUI_FONT_SIZE)
-
+        tile_image = load_image('tile.png', tile_size)
+        mine_image = load_image('mine.png', tile_size)
+        flag_image = load_image('flag.png', tile_size)
+        bg_image = load_random_image()
+        # gui_font = load_font("Akrobat-Bold.otf", self.GUI_FONT_SIZE)
+        gui_font = load_font("STHeiti-Thin-1.ttc", self.GUI_FONT_SIZE)
+        hud_font = load_font("STHeiti-Medium-4.ttc", self.HUD_FONT_SIZE)
         self.board = Board(
             self.n_rows, self.n_cols, self.n_mines,
-            self.FIELD_BG_COLOR, self.FIELD_LINES_COLOR, self.TILE_SIZE,
-            tile_image, mine_count_images, flag_image, mine_image,
+            self.FIELD_BG_COLOR, self.FIELD_LINES_COLOR, tile_size,
+            tile_image, mine_count_images, flag_image, mine_image, bg_image,
             on_status_change_callback=self.on_status_change)
 
         self.board_axis = BoardAxis(self.board, gui_font, self.GUI_FONT_COLOR)
 
+        """ screen """
         self.screen = None
         self.screen_rect = None
-        self.board_rect = None
-        self.hud_rect = None
+        self.screen_image = None
         self.gui_rect = None
-        self.board_area_rect = None
         self.init_screen()
 
-        self.difficulty_selector = SelectionGroup(
-            gui_font,
-            self.GUI_FONT_COLOR,
-            "DIFFICULTY",
-            ["EASY", "NORMAL", "HARD", "CUSTOM"],
-            initial_value=state.get('difficulty', 'EASY'))
+        """ gui """
+        self.difficulty_hint = Label(gui_font, self.GUI_FONT_COLOR, "当前难度：" + self.difficulty)
 
-        self.difficulty_selector.rect.centerx = self.gui_rect.centerx
-        self.difficulty_selector.rect.y = self.MARGIN
-        self.difficulty_selector.callback = self.on_difficulty_change
-
-        active_input = self.difficulty_selector.selected == "CUSTOM"
-        self.width_input = Input(gui_font, self.GUI_FONT_COLOR,
-                                 "WIDTH", self.n_cols,
-                                 active_input=active_input,
-                                 width=self.GUI_WIDTH, max_value_length=3,
-                                 key_filter=is_digit,
-                                 on_enter_callback=self.on_cols_enter)
-        self.height_input = Input(gui_font, self.GUI_FONT_COLOR,
-                                  "HEIGHT", self.n_rows, width=self.GUI_WIDTH,
-                                  active_input=active_input,
-                                  max_value_length=3,
-                                  key_filter=is_digit,
-                                  on_enter_callback=self.on_rows_enter)
-        self.mines_input = Input(gui_font, self.GUI_FONT_COLOR,
-                                 "MINES", self.n_mines, width=self.GUI_WIDTH,
-                                 active_input=active_input,
-                                 max_value_length=3,
-                                 key_filter=is_digit,
-                                 on_enter_callback=self.on_mines_enter)
-
-        self.timer = Input(gui_font, self.GUI_FONT_COLOR,
-                           "TIME", self.board.time)
-        self.current_mines = Input(gui_font, self.GUI_FONT_COLOR,
-                                   "MINES", self.board.n_mines)
-
-        self.status = Label(gui_font, self.GUI_FONT_COLOR, "READY TO GO!")
-
-        self.restart_button = Button(gui_font,
-                                     self.GUI_FONT_COLOR,
-                                     "RESTART",
-                                     self.board.reset)
-
-        self.show_leaderboard_button = Button(gui_font, self.GUI_FONT_COLOR,
-                                              "LEADER BOARD",
-                                              self.show_leaderboard)
-
-        leaderboard_width = (
-            self.GUI_WIDTH + 2 * self.MARGIN
-            + self.MIN_BOARD_DIMENSION_DISPLAY * self.TILE_SIZE)
         self.leaderboard = Leaderboard(gui_font, self.GUI_FONT_COLOR,
-                                       5, leaderboard_width,
+                                       10, self.GUI_WIDTH,
                                        data=leaderboard_data)
-        self.leaderboard_hint = Label(gui_font, self.GUI_FONT_COLOR,
-                                      "CLICK TO CONTINUE")
-
-        self.name_input = InputDialogue(gui_font, self.GUI_FONT_COLOR,
-                                        "ENTER YOUR NAME",
-                                        self.on_name_enter,
-                                        max_length=self.MAX_NAME_LENGTH,
-                                        key_filter=is_key_suitable_for_name)
 
         self.victory_time = Label(gui_font, self.GUI_FONT_COLOR, "")
         self.leaderboard_announcement = Label(
             gui_font, self.GUI_FONT_COLOR,
             "YOU MADE IT TO THE LEADERBOARD!")
-        self.show_name_input_timer = Timer(self.show_name_input)
+
+        self.timer = Input(hud_font, self.HUD_FONT_COLOR,
+                           '', self.board.time)
+        self.current_mines = Input(hud_font, self.HUD_FONT_COLOR,
+                                   '', self.board.n_mines)
+        self.player_display = Label(hud_font, self.HUD_FONT_COLOR, "")
+
+        self.status = Label(hud_font, self.HUD_FONT_COLOR, "READY TO GO!")
+        self.countdown = Label(hud_font, self.HUD_FONT_COLOR, "")
+
+        self.gameover_restart_timer = Timer(self.reset_game, self.countdown)
+        self.player_input_timer = Timer(self.reset_player, self.countdown, 30000)
 
         self.place_gui()
         self.keep_running = None
@@ -269,42 +271,49 @@ class Game:
 
     def init_screen(self):
         """Initialize screen and compute rectangles for different regions."""
-        board_area_width = \
-            max(self.n_cols, self.MIN_BOARD_DIMENSION_DISPLAY) * self.TILE_SIZE
-        board_area_height = \
-            max(self.n_rows, self.MIN_BOARD_DIMENSION_DISPLAY) * self.TILE_SIZE
-        window_width = 3 * self.MARGIN + self.GUI_WIDTH + board_area_width
-        window_height = 3 * self.MARGIN + self.HUD_HEIGHT + board_area_height
+        self.screen_image = load_image('screen.png')
+        self.screen_rect = self.screen_image.get_rect()
+        self.screen = pygame.display.set_mode((self.screen_rect.width, self.screen_rect.height))
 
-        self.board_area_rect = pygame.Rect(2 * self.MARGIN + self.GUI_WIDTH,
-                                           2 * self.MARGIN + self.HUD_HEIGHT,
-                                           board_area_width,
-                                           board_area_height)
-
-        self.board.rect.size = (self.n_cols * self.TILE_SIZE,
-                                self.n_rows * self.TILE_SIZE)
-        self.board.rect.center = self.board_area_rect.center
+        self.board.rect = pygame.Rect(704,
+                                      116,
+                                      self.BOARD_SIZE,
+                                      self.BOARD_SIZE)
 
         self.board_axis.set(self.board)
 
-        self.hud_rect = pygame.Rect(2 * self.MARGIN + self.GUI_WIDTH,
-                                    self.MARGIN,
-                                    board_area_width,
-                                    self.HUD_HEIGHT)
-
-        self.screen = pygame.display.set_mode((window_width, window_height))
-        self.screen_rect = self.screen.get_rect()
-        self.screen.fill(self.BG_COLOR)
-        self.gui_rect = pygame.Rect(self.MARGIN,
-                                    2 * self.MARGIN + self.HUD_HEIGHT,
+        self.gui_rect = pygame.Rect(50,
+                                    50,
                                     self.GUI_WIDTH,
-                                    board_area_height)
+                                    400)
+
+    def place_gui(self):
+        """Place GUI element according to the current settings."""
+        self.difficulty_hint.rect.left = self.gui_rect.left
+        self.difficulty_hint.rect.top = self.gui_rect.top
+
+        self.leaderboard.rect.centerx = self.gui_rect.centerx
+        self.leaderboard.rect.top = self.difficulty_hint.rect.bottom
+
+        self.leaderboard_announcement.rect.top = (
+                self.victory_time.rect.bottom
+                + 0.4 * self.victory_time.rect.height)
+        self.leaderboard_announcement.rect.centerx = self.screen_rect.centerx
+
+        self.timer.rect.center = (800, 70)
+        self.current_mines.rect.center = (940, 70)
+        self.player_display.rect.left = 1080
+        self.player_display.rect.centery = 70
+        self.status.rect.center = self.board.rect.center
+        self.countdown.rect.center = (730, 150)
 
     def set_difficulty(self, difficulty):
         """Adjust game parameters given difficulty.
 
         Custom difficulty is not handled in this function.
         """
+        self.difficulty = difficulty
+
         if difficulty == "EASY":
             self.n_rows = 10
             self.n_cols = 10
@@ -313,126 +322,46 @@ class Game:
             self.n_rows = 16
             self.n_cols = 16
             self.n_mines = 40
-        elif difficulty == "HARD":
-            self.n_rows = 16
-            self.n_cols = 30
-            self.n_mines = 99
 
-    def place_gui(self):
-        """Place GUI element according to the current settings."""
-        self.width_input.rect.topleft = (
-            self.gui_rect.x,
-            self.difficulty_selector.rect.bottom
-            + 0.2 * self.difficulty_selector.rect.height)
-        self.height_input.rect.topleft = (
-            self.gui_rect.x,
-            self.width_input.rect.bottom + 0.4 * self.height_input.rect.height)
-        self.mines_input.rect.topleft = (
-            self.gui_rect.x,
-            self.height_input.rect.bottom + 0.4 * self.width_input.rect.height)
-
-        hud_width = self.place_hud()
-
-        self.restart_button.rect.top = self.timer.rect.top
-        self.restart_button.rect.centerx = 0.5 * (self.hud_rect.left
-                                                  + self.hud_rect.right
-                                                  - hud_width)
-
-        self.show_leaderboard_button.rect.bottom = (self.screen_rect.height
-                                                    - self.MARGIN)
-        self.show_leaderboard_button.rect.centerx = (self.MARGIN
-                                                     + 0.5 * self.GUI_WIDTH)
-
-        screen_center = self.screen.get_rect().centerx
-        self.status.rect.top = self.current_mines.rect.top
-        self.status.rect.centerx = self.restart_button.rect.centerx
-
-        self.leaderboard.rect.top = self.MARGIN
-        self.leaderboard.rect.centerx = screen_center
-
-        self.leaderboard_hint.rect.bottom = (self.screen_rect.height
-                                             - self.MARGIN)
-        self.leaderboard_hint.rect.centerx = self.screen_rect.centerx
-
-        self.victory_time.rect.top = self.MARGIN
-        self.victory_time.rect.centerx = self.screen_rect.centerx
-        self.leaderboard_announcement.rect.top = (
-            self.victory_time.rect.bottom
-            + 0.4 * self.victory_time.rect.height)
-        self.leaderboard_announcement.rect.centerx = self.screen_rect.centerx
-
-        self.name_input.rect.top = (
-            self.leaderboard_announcement.rect.bottom
-            + self.leaderboard_announcement.rect.height)
-        self.name_input.rect.centerx = self.screen_rect.centerx
-
-    def place_hud(self):
-        """Place timer and mines info and return width of this block."""
-        hud_width = max(self.timer.rect.width, self.current_mines.rect.width)
-        self.timer.rect.topleft = (self.hud_rect.right - hud_width,
-                                   self.hud_rect.top)
-        self.current_mines.rect.topleft = (
-            self.timer.rect.left,
-            self.timer.rect.bottom + 0.4 * self.timer.rect.height)
-        return hud_width
+        self.difficulty_hint.set_text("当前难度："+difficulty)
 
     def reset_game(self):
         """Reset the game."""
+        print('reset')
+        bg_image = load_random_image()
+        tile_size = self.BOARD_SIZE // min(self.n_rows, self.n_cols)
         self.board.reset(n_rows=self.n_rows,
                          n_cols=self.n_cols,
-                         n_mines=self.n_mines)
+                         n_mines=self.n_mines,
+                         bg_image=bg_image,
+                         tile_size=tile_size)   # game status is changed here
         self.board_axis.set(self.board)
 
-    def show_leaderboard(self):
-        """Change screen to leaderboard."""
-        self.mode = "leaderboard"
-
-    def show_name_input(self):
-        """Change screen to name input."""
-        self.mode = "name_input"
-        self.victory_time.set_text("YOUR TIME IS {} SECONDS"
-                                   .format(self.board.time))
-        self.name_input.set_value("")
-        self.place_gui()
-
-    def on_name_enter(self, name):
-        """Handle name enter for the leaderboard."""
-        if not name:
-            return
-        self.leaderboard.update(self.difficulty_selector.selected,
-                                name,
-                                self.board.time)
-        self.mode = "leaderboard"
+    def reset_player(self):
+        self.player = 'all'
+        self.player_input_timer.stop()
 
     def on_status_change(self, new_status):
         """Handle game status change."""
         if new_status == 'game_over':
             self.status.set_text("GAME OVER!")
+            self.gameover_restart_timer.start(self.DELAY_BEFORE_RESTART_MS)
+            self.reset_player()
         elif new_status == 'victory':
             self.status.set_text("VICTORY!")
-            if self.leaderboard.needs_update(self.difficulty_selector.selected,
-                                             self.board.time):
-                self.show_name_input_timer.start(
-                    self.DELAY_BEFORE_NAME_INPUT_MS)
+            if self.player != 'all' and self.leaderboard.needs_update(self.difficulty,
+                                                                      self.board.time):
+                self.leaderboard.update(self.difficulty, self.player, self.board.time)
+            self.gameover_restart_timer.start(self.DELAY_BEFORE_RESTART_MS)
+            self.reset_player()
         elif new_status == 'before_start':
             self.status.set_text("READY TO GO!")
         else:
-            self.status.set_text("GOOD LUCK!")
+            self.status.set_text("")
 
     def on_difficulty_change(self, difficulty):
         """Handle difficulty change."""
-        self.height_input.active_input = False
-        self.width_input.active_input = False
-        self.mines_input.active_input = False
         self.set_difficulty(difficulty)
-        if difficulty == "CUSTOM":
-            self.height_input.active_input = True
-            self.width_input.active_input = True
-            self.mines_input.active_input = True
-
-        self.height_input.set_value(self.n_rows)
-        self.width_input.set_value(self.n_cols)
-        self.mines_input.set_value(self.n_mines)
 
         self.init_screen()
         self.place_gui()
@@ -447,61 +376,34 @@ class Game:
         value = min(max(1, value), max_value)
         setattr(self, parameter, value)
         self.n_mines = min(self.n_mines, self.n_rows * self.n_cols - 1)
-        self.mines_input.set_value(self.n_mines)
         self.init_screen()
         self.place_gui()
         self.reset_game()
         return value
 
-    def on_rows_enter(self, value):
-        """Handle n_rows input."""
-        return self.set_game_parameter('n_rows',
-                                       self.max_rows,
-                                       value)
-
-    def on_cols_enter(self, value):
-        """Handle n_cols input."""
-        return self.set_game_parameter('n_cols',
-                                       self.max_cols,
-                                       value)
-
-    def on_mines_enter(self, value):
-        """Hand n_mines input."""
-        return self.set_game_parameter('n_mines',
-                                       self.n_rows * self.n_cols - 1,
-                                       value)
-
     def draw_all(self):
         """Draw all elements."""
-        self.screen.fill(self.BG_COLOR)
+        self.screen.blit(self.screen_image, self.screen_image.get_rect())
 
-        if self.mode == "leaderboard":
-            self.leaderboard.draw(self.screen)
-            self.leaderboard_hint.draw(self.screen)
-            pygame.display.flip()
-            return
-        elif self.mode == "name_input":
+        if self.mode == "name_input":
             self.victory_time.draw(self.screen)
             self.leaderboard_announcement.draw(self.screen)
-            self.name_input.draw(self.screen)
             pygame.display.flip()
             return
 
         self.board.draw(self.screen)
-
         self.board_axis.draw(self.screen)
 
-        self.difficulty_selector.draw(self.screen)
-        self.height_input.draw(self.screen)
-        self.width_input.draw(self.screen)
-        self.mines_input.draw(self.screen)
+        # self.difficulty_selector.draw(self.screen)
+        self.difficulty_hint.draw(self.screen)
+        self.leaderboard.draw(self.screen)
 
         self.timer.draw(self.screen)
         self.current_mines.draw(self.screen)
+        self.player_display.draw(self.screen)
         self.status.draw(self.screen)
 
-        self.restart_button.draw(self.screen)
-        self.show_leaderboard_button.draw(self.screen)
+        self.countdown.draw(self.screen)
 
         pygame.display.flip()
 
@@ -517,24 +419,38 @@ class Game:
                     self.mode = "game"
                 break
             elif self.mode == "name_input":
-                if event.type == pygame.KEYDOWN:
-                    self.name_input.on_key_down(event)
+                pass
                 break
 
             if event.type == pygame.MOUSEBUTTONUP:
-                self.difficulty_selector.on_mouse_up(event.button)
-                self.height_input.on_mouse_up(event.button)
-                self.width_input.on_mouse_up(event.button)
-                self.mines_input.on_mouse_up(event.button)
-                self.restart_button.on_mouse_up(event.button)
-                self.show_leaderboard_button.on_mouse_up(event.button)
                 self.board.on_mouse_up(event.button)
+
             if event.type == pygame.MOUSEBUTTONDOWN:
                 self.board.on_mouse_down(event.button)
-            elif event.type == pygame.KEYDOWN:
-                self.height_input.on_key_down(event)
-                self.width_input.on_key_down(event)
-                self.mines_input.on_key_down(event)
+
+    def process_danmu_list(self):
+        danmu_list = self.dmj.get_danmu_list()
+        for danmu in danmu_list:
+            print(danmu)
+            if self.player == 'all' or self.player == danmu[0]:
+                if danmu[1] == 'gift':
+                    print(self.board.game_status)
+                    if self.player == 'all':
+                        self.player = danmu[0]
+                        self.player_input_timer.start(self.PLAYER_INPUT_INTERVAL_MS)
+                elif danmu[1] == 'difficulty':
+                    if self.board.game_status != "running":
+                        self.on_difficulty_change(danmu[2])
+                else:
+                    if self.player != 'all':
+                        self.player_input_timer.start(self.PLAYER_INPUT_INTERVAL_MS)
+                    i, j = self.board.n_rows - danmu[2][1] - 1, danmu[2][0]
+                    if danmu[1] == 'open':
+                        self.board.open_tile(i, j)
+                    elif danmu[1] == 'check':
+                        self.board.check_tile_if_unchecked(i, j)
+                    elif danmu[1] == 'uncheck':
+                        self.board.uncheck_tile_if_checked(i, j)
 
     def start_main_loop(self):
         """Start main game loop."""
@@ -544,15 +460,22 @@ class Game:
             clock.tick(30)
             self.timer.set_value(self.board.time)
             self.current_mines.set_value(self.board.n_mines_left)
-            self.place_hud()
+            player_text = self.player
+            if len(player_text) > 8:
+                player_text = player_text[:8] + "..."
+            self.player_display.set_text(player_text)
             self.process_events()
-            self.show_name_input_timer.check()
+            self.process_danmu_list()
+            self.player_input_timer.check()
+            self.gameover_restart_timer.check()
+
+            self.place_gui()
             self.draw_all()
 
     def save_state(self, state_file_path):
         """Save game state on disk."""
         state = {
-            "difficulty": self.difficulty_selector.selected,
+            "difficulty": self.difficulty,
             "n_rows": self.n_rows,
             "n_cols": self.n_cols,
             "n_mines": self.n_mines,

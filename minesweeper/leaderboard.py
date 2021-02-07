@@ -25,12 +25,12 @@ class Leaderboard:
         self.font_color = font_color
         self.max_items = max_items
 
-        self.section_width = width // 3
+        self.section_width = width // 2
         self.text_height = font.get_height()
         self.horizontal_margin = 2 * font.size("|")[0]
         self.vertical_margin = 0.5 * self.text_height
 
-        self.width = 3 * self.section_width
+        self.width = 2 * self.section_width
         self.height = ((4 + max_items) * self.vertical_margin
                        + (2 + max_items) * self.text_height)
 
@@ -38,15 +38,14 @@ class Leaderboard:
                                       pygame.SRCALPHA)
         self.rect = self.surface.get_rect()
 
-        self.title = font.render("LEADER BOARD", True, font_color)
+        self.title = font.render("排行榜", True, font_color)
         self.easy_title = font.render("EASY", True, font_color)
         self.normal_title = font.render("NORMAL", True, font_color)
-        self.hard_title = font.render("HARD", True, font_color)
         self.list_start_y = (self.vertical_margin + 2 * self.text_height
                              + self.text_height + self.vertical_margin)
 
         if data is None:
-            self.data = {'EASY': [], 'NORMAL': [], 'HARD': []}
+            self.data = {'EASY': [], 'NORMAL': []}
         else:
             self.data = data
 
@@ -78,10 +77,6 @@ class Leaderboard:
                          (self.section_width, line_top),
                          (self.section_width,
                           self.height - self.vertical_margin))
-        pygame.draw.line(self.surface, self.font_color,
-                         (2 * self.section_width, line_top),
-                         (2 * self.section_width,
-                          self.height - self.vertical_margin))
 
         title_rect = self.title.get_rect(
             top=self.vertical_margin, centerx=0.5 * self.width)
@@ -89,20 +84,17 @@ class Leaderboard:
             top=section_titles_top, centerx=0.5 * self.section_width)
         normal_title_rect = self.normal_title.get_rect(
             top=section_titles_top, centerx=1.5 * self.section_width)
-        hard_title_rect = self.hard_title.get_rect(
-            top=section_titles_top, centerx=2.5 * self.section_width)
 
         self.surface.blit(self.title, title_rect)
         self.surface.blit(self.easy_title, easy_title_rect)
         self.surface.blit(self.normal_title, normal_title_rect)
-        self.surface.blit(self.hard_title, hard_title_rect)
 
     def _prepare_render(self):
         """Prepare surface to render."""
         self._prepare_surface()
         x_name = self.horizontal_margin
         x_time = self.section_width - self.horizontal_margin
-        for difficulty in ["EASY", "NORMAL", "HARD"]:
+        for difficulty in ["EASY", "NORMAL"]:
             y = self.list_start_y
             for name, time in self.data[difficulty]:
                 name_image = self.font.render(name, True, self.font_color)

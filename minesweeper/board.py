@@ -34,7 +34,7 @@ class Tile(pygame.sprite.Sprite):
                                 tile_size, tile_size)
 
 
-def create_field(n_rows, n_cols, tile_size, bg_color, line_color):
+def create_field(n_rows, n_cols, tile_size, bg_color, line_color, bg_image=None):
     """Create a checkered field.
 
     Parameters
@@ -47,6 +47,8 @@ def create_field(n_rows, n_cols, tile_size, bg_color, line_color):
         Background color.
     line_color : pygame.Color compatible
         Color of lines.
+    bg_image:pygame.Surface
+        Image shown in background
 
     Returns
     -------
@@ -55,6 +57,13 @@ def create_field(n_rows, n_cols, tile_size, bg_color, line_color):
     """
     field = pygame.Surface((n_cols * tile_size, n_rows * tile_size))
     field.fill(bg_color)
+    if bg_image is not None:
+        rect = bg_image.get_rect()
+        size = min(rect.height, rect.width)
+        bg_image = pygame.transform.smoothscale(bg_image, (int(rect.width / size * n_cols * tile_size),
+                                                     int(rect.height / size * n_rows * tile_size)))
+        bg_image.set_alpha(180)
+        field.blit(bg_image, bg_image.get_rect())
 
     for i in range(n_rows):
         pygame.draw.line(field, line_color,
@@ -99,9 +108,9 @@ class Board:
     TILE_OPENED = 1
     TILE_CHECKED = 2
 
-    def __init__(self, n_rows, n_cols, n_mines, bg_color, bg_lines_color,
-                 tile_size, tile_image, mine_count_images, flag_image,
-                 mine_image, on_status_change_callback=None):
+    def __init__(self, n_rows, n_cols, n_mines, bg_color, bg_lines_color, tile_size,
+                 tile_image, mine_count_images, flag_image, mine_image,  bg_image,
+                 on_status_change_callback=None):
         self.n_rows = n_rows
         self.n_cols = n_cols
         self.n_mines = n_mines
@@ -122,7 +131,9 @@ class Board:
         self.bg_lines_color = bg_lines_color
         self.bg_image = create_field(self.n_rows, self.n_cols,
                                      self.tile_size, bg_color,
-                                     bg_lines_color)
+                                     bg_lines_color,
+                                     bg_image)
+
         self.tile_image = tile_image
         self.mine_count_images = mine_count_images
         self.flag_image = flag_image
@@ -132,6 +143,17 @@ class Board:
                                               2)
         self.mine_image_red_bg = add_background_color(mine_image,
                                                       pygame.Color('red'))
+
+        self.tile_image_bak = tile_image
+        self.mine_count_images_bak = mine_count_images.copy()
+        self.flag_image_bak = flag_image
+        self.mine_image_bak = mine_image
+        self.mine_image_crossed_bak = cross_image(mine_image,
+                                                  pygame.Color('red'),
+                                                  2)
+        self.mine_image_red_bg_bak = add_background_color(mine_image,
+                                                          pygame.Color('red'))
+
         self.rect = pygame.Rect(
             0, 0, self.n_cols * self.tile_size, self.n_rows * self.tile_size)
 
@@ -150,7 +172,7 @@ class Board:
                 self.tiles.append(Tile(self.tile_image, i, j, self.tile_size))
         self.tiles_group = pygame.sprite.Group(*self.tiles)
 
-    def reset(self, n_rows=None, n_cols=None, n_mines=None):
+    def reset(self, n_rows=None, n_cols=None, n_mines=None, bg_image=None, tile_size=None):
         """Reset board.
 
         Optional arguments will replace ones set in the class (if presented).
@@ -170,8 +192,20 @@ class Board:
             self.n_rows = n_rows
             self.n_cols = n_cols
 
+        if self.tile_size != tile_size:
+            self.tile_size = tile_size
+            self.tile_image = pygame.transform.smoothscale(self.tile_image_bak, (tile_size, tile_size))
+            self.flag_image = pygame.transform.smoothscale(self.flag_image_bak, (tile_size, tile_size))
+            self.mine_image = pygame.transform.smoothscale(self.mine_image_bak, (tile_size, tile_size))
+            self.mine_image_crossed = pygame.transform.smoothscale(self.mine_image_crossed_bak, (tile_size, tile_size))
+            self.mine_image_red_bg = pygame.transform.smoothscale(self.mine_image_red_bg_bak, (tile_size, tile_size))
+            for i in range(len(self.mine_count_images)):
+                self.mine_count_images[i] = pygame.transform.smoothscale(self.mine_count_images_bak[i], (tile_size,
+                                                                                                         tile_size))
+
         self.bg_image = create_field(self.n_rows, self.n_cols, self.tile_size,
-                                     self.bg_color, self.bg_lines_color)
+                                     self.bg_color, self.bg_lines_color, bg_image)
+
         self.n_mines_left = self.n_mines
         self.is_mine.fill(0)
         self.mine_count = None
@@ -275,7 +309,7 @@ class Board:
             self.n_mines_left = 0
             self.tile_status[self.is_mine] = self.TILE_CHECKED
 
-    def _check_tile(self, i, j):
+    def check_tile(self, i, j):
         """Check tile with a flag (right click action)."""
         if self.tile_status[i, j] == self.TILE_CLOSED:
             self.tile_status[i, j] = self.TILE_CHECKED
@@ -284,8 +318,21 @@ class Board:
             self.tile_status[i, j] = self.TILE_CLOSED
             self.n_mines_left += 1
 
-    def _open_tile(self, i, j):
+    def check_tile_if_unchecked(self, i, j):
+        if self.tile_status[i, j] == self.TILE_CLOSED:
+            self.tile_status[i, j] = self.TILE_CHECKED
+            self.n_mines_left -= 1
+
+    def uncheck_tile_if_checked(self, i, j):
+        if self.tile_status[i, j] == self.TILE_CHECKED:
+            self.tile_status[i, j] = self.TILE_CLOSED
+            self.n_mines_left += 1
+
+    def open_tile(self, i, j):
         """Open tile (left click action)."""
+        if i < 0 or i >= self.n_rows or j < 0 or j >= self.n_cols:
+            return
+
         status = self.tile_status[i, j]
         if status == self.TILE_CHECKED:
             return
@@ -439,7 +486,7 @@ class Board:
         if button == RIGHT_BUTTON:
             i, j = self._get_tile_indices_at_mouse()
             if i is not None and j is not None:
-                self._check_tile(i, j)
+                self.check_tile(i, j)
                 self._update_view()
 
     def on_mouse_up(self, button):
@@ -450,16 +497,14 @@ class Board:
         if button == LEFT_BUTTON:
             i, j = self._get_tile_indices_at_mouse()
             if i is not None and j is not None:
-                self._open_tile(i, j)
+                self.open_tile(i, j)
                 self._update_view()
 
     def draw(self, surface):
         """Draw board on surface."""
         # In this case we need to update tiles being pressed due to the mouse
         # hold.
-        if self.game_status in ["before_start", "running"]:
-            if pygame.mouse.get_pressed()[0]:
-                self._update_view_running()
+        self._update_view()
 
         bg = self.bg_image.copy()
         self.tiles_group.draw(bg)
