@@ -128,11 +128,9 @@ class Leaderboard:
 
         data = self.data[difficulty]
 
-        for record in data:
-            if record[0] == name:
-                record[1] = time
-                self._prepare_render()
-                return
+        for i in range(len(data)):
+            if data[i][0] == name:
+                data.pop(i)
 
         i = 0
         while i < len(data) and time >= data[i][1]:
