@@ -374,7 +374,7 @@ class Game:
             self.reset_player()
         elif new_status == 'victory':
             self.status.set_text("VICTORY!")
-            if self.leaderboard.needs_update(self.difficulty, self.board.time):
+            if self.leaderboard.needs_update(self.difficulty, self.free_player.top(), self.board.time):
                 self.leaderboard.update(self.difficulty, self.free_player.top(), self.board.time)
                 self.save_state(self.state_file_path)
             self.gameover_restart_timer.start(self.DELAY_BEFORE_RESTART_MS)

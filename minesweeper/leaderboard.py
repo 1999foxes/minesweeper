@@ -108,16 +108,18 @@ class Leaderboard:
             x_name += self.section_width
             x_time += self.section_width
 
-    def needs_update(self, difficulty, time):
+    def needs_update(self, difficulty, name, time):
         """Check whether the leaderboard needs to be updated."""
         if difficulty not in self.data:
             return False
 
         data = self.data[difficulty]
-        if len(data) < self.max_items:
-            return True
 
-        return data[-1][1] > time
+        for record in data:
+            if record[0] == name:
+                return record[1] > time
+
+        return len(data) < self.max_items
 
     def update(self, difficulty, name, time):
         """Update the leaderboard."""
@@ -125,6 +127,13 @@ class Leaderboard:
             return
 
         data = self.data[difficulty]
+
+        for record in data:
+            if record[0] == name:
+                record[1] = time
+                self._prepare_render()
+                return
+
         i = 0
         while i < len(data) and time >= data[i][1]:
             i += 1
